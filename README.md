@@ -1,4 +1,4 @@
-# Project Title
+# ONMF_ONTF_NDL
 
 Online Nonnegative Matrix/Tensor Factorization algorithms with applications in dictionary learning for image and network data. 
 
