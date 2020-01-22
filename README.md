@@ -1,6 +1,6 @@
 # Project Title
 
-Online Matrix/Tensor Factorization algorithms with applications in dictioanry learning for image and network data. 
+Online Nonnegative Matrix/Tensor Factorization algorithms with applications in dictioanry learning for image and network data. 
 
 ## References
 
