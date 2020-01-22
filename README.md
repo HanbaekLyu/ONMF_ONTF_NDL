@@ -34,4 +34,4 @@ This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md
 
 ## Acknowledgments
 
-* My REU students Nick Hanoian and Henri Sojico for polishing up **onmf.py** and **image_reconstruction.py**
+* My REU students Nick Hanoian and Henry Sojico for polishing up **onmf.py** and **image_reconstruction.py**
