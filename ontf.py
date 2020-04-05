@@ -13,7 +13,6 @@ from tensorly import unfold as tl_unfold
 from tensorly.decomposition import parafac
 from sklearn.decomposition import SparseCoder
 
-
 DEBUG = False
 
 
@@ -22,7 +21,7 @@ class Online_NTF():
     def __init__(self,
                  X, n_components=100,
                  iterations=500,
-                 sub_iterations = 10,
+                 sub_iterations=10,
                  batch_size=20,
                  ini_dict=None,
                  ini_A=None,
@@ -30,7 +29,9 @@ class Online_NTF():
                  history=0,
                  mode=0,
                  learn_joint_dict=False,
-                 alpha=None):
+                 alpha=None,
+                 beta=None,
+                 subsample=True):
         '''
         X: data tensor (3-dimensional)
         Seeks to find nonnegative tensor factorization X \approx \sum W^l * H^l * T^L
@@ -49,9 +50,11 @@ class Online_NTF():
         self.initial_B = ini_B
         self.history = history
         self.alpha = alpha
+        self.beta = beta
         self.mode = mode  # mode of unfolding the input tensor to learn marginal dictioanry by OMF problem
         self.learn_joint_dict = learn_joint_dict
-        self.code = np.zeros(shape=(X.shape[1],n_components))
+        self.code = np.zeros(shape=(X.shape[1], n_components))
+        self.subsample = subsample
 
     def joint_sparse_code_tensor(self, X, W):
         '''
@@ -102,19 +105,19 @@ class Online_NTF():
         d, r = np.shape(W)
         W1 = W.copy()
 
-        #****
+        # ****
         for j in np.arange(r):
-                # W1[:,j] = W1[:,j] - (1/W1[j,j])*(np.dot(W1, A[:,j]) - B.T[:,j])
-                W1[:,j] = W1[:,j] - (1/(A[j,j]+1) )*(np.dot(W1, A[:,j]) - B.T[:,j])
-                W1[:,j] = np.maximum(W1[:,j], np.zeros(shape=(d, )))
-                W1[:,j] = (1/np.maximum(1, LA.norm(W1[:,j])))*W1[:,j]
+            # W1[:,j] = W1[:,j] - (1/W1[j,j])*(np.dot(W1, A[:,j]) - B.T[:,j])
+            W1[:, j] = W1[:, j] - (1 / (A[j, j] + 1)) * (np.dot(W1, A[:, j]) - B.T[:, j])
+            W1[:, j] = np.maximum(W1[:, j], np.zeros(shape=(d,)))
+            W1[:, j] = (1 / np.maximum(1, LA.norm(W1[:, j]))) * W1[:, j]
 
         return W1
 
     def step(self, X, A, B, W, t):
         '''
         Performs a single iteration of the online NMF algorithm from
-        Han's Markov paper. 
+        Han's Markov paper.
         Note: H (numpy array): code matrix with dimensions: topics (r) x samples(n)
 
         args:
@@ -123,7 +126,7 @@ class Online_NTF():
             B (numpy array): aggregate matrix with dimensions: topics (r) x data_dim(d)
             W (numpy array): dictionary matrix with dimensions: data_dim (d) x topics (r)
             t (int): current iteration of the online algorithm
-        
+
         returns:
             Updated versions of H, A, B, and W after one iteration of the online NMF
             algorithm (H1, A1, B1, and W1 respectively)
@@ -136,8 +139,14 @@ class Online_NTF():
             print(H1.shape)
 
         # Update aggregate matrices A and B
-        A1 = (1 / t) * ((t - 1) * A + np.dot(H1.T, H1))
-        B1 = (1 / t) * ((t - 1) * B + np.dot(H1.T, X.T))
+        t = t.astype(float)
+        if self.beta == None:
+            beta = 1
+        else:
+            beta = self.beta
+        A1 = (1 - (t ** (-beta))) * A + t ** (-beta) * np.dot(H1.T, H1)
+        B1 = (1 - (t ** (-beta))) * B + t ** (-beta) * np.dot(H1.T, X.T)
+
         # Update dictionary matrix
         W1 = self.update_dict(W, A, B)
         self.history = t + 1
@@ -213,16 +222,18 @@ class Online_NTF():
             t0 = self.history
 
         for i in np.arange(1, self.iterations):
+            X_batch = X_unfold
             # randomly choose batch_size number of columns to sample
-
             # initializing the "batch" of X, which are the subset
             # of columns from X_unfold that were randomly chosen above
-            idx = np.random.randint(n, size=self.batch_size)
-            X_batch = X_unfold[:, idx]
+            if self.subsample:
+                idx = np.random.randint(n, size=self.batch_size)
+                X_batch = X_unfold[:, idx]
+
             # iteratively update W using batches of X, along with
             # iteratively updated values of A and B
             # print('X.shape before training step', self.X.shape)
-            H, A, B, W = self.step(X_batch, A, B, W, t0+i)
+            H, A, B, W = self.step(X_batch, A, B, W, t0 + i)
             # code[idx,:] += H
             # print('dictionary=', W)
             # print('code=', H)

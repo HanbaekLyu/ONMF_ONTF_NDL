@@ -1,12 +1,9 @@
 from onmf import Online_NMF
-from dyn_emb import Dyn_Emb
 import numpy as np
 import csv
-import seaborn as sns
 import progressbar
 import itertools
 from time import time
-from numpy import linalg as LA
 from sklearn.decomposition import SparseCoder
 import matplotlib.pyplot as plt
 
@@ -14,9 +11,22 @@ DEBUG = False
 
 
 class Network_Reconstructor():
-    def __init__(self, source, n_components=100, MCMC_iterations=500, sub_iterations=100, loc_avg_depth=1,
-                 sample_size=1000, batch_size=10, k1=1, k2=2, ntwk_size=211,
-                 patches_file='', is_stack=False, alpha=None):
+    def __init__(self,
+                 source,
+                 n_components=100,
+                 MCMC_iterations=500,
+                 sub_iterations=100,
+                 loc_avg_depth=1,
+                 sample_size=1000,
+                 batch_size=10,
+                 k1=1,
+                 k2=2,
+                 ntwk_size=211,
+                 patches_file='',
+                 alpha=None,
+                 beta=None,
+                 ONMF_subsample=False,
+                 file_number=1):
         '''
         batch_size = number of patches used for training dictionaries per ONMF iteration
         sources: array of filenames to make patches out of
@@ -33,10 +43,12 @@ class Network_Reconstructor():
         self.k2 = k2
         self.ntwk_size = ntwk_size
         self.patches_file = patches_file
-        self.is_stack = is_stack  # if True, input data is a 3d array
-        self.W = np.zeros(shape=(k1 + k2 + 1, n_components))
+        self.W = np.zeros(shape=((k1 + k2 + 1)**2, n_components))
         self.code = np.zeros(shape=(n_components, batch_size))
         self.alpha = alpha
+        self.beta = beta
+        self.ONMF_subsample = ONMF_subsample
+        self.file_number = file_number
 
         # read in networks
         A = self.read_networks(source)
@@ -44,7 +56,14 @@ class Network_Reconstructor():
 
     def read_networks(self, path):
         A = np.genfromtxt(path, usecols=range(self.ntwk_size))
+        print('A_norm_full', np.linalg.norm(A/np.max(A)))
+        ### get rid of singleton nodes
+        for i in np.arange(self.ntwk_size):
+            if A[i,i] == np.sum(A[i,:]) + np.sum(A[:,i]):
+                A[i,i] = 0
+                print('node is singleton:', i)
         A = A / np.max(A)
+        print('A_norm', np.linalg.norm(A))
         return A
 
     def path_adj(self, k1, k2):
@@ -144,6 +163,53 @@ class Network_Reconstructor():
         A[A > 1] = 1
         return A
 
+    def RW_update(self, x):
+        # A = N by N matrix giving edge weights on networks
+        # x = RW is currently at site x
+        # stationary distribution = uniform
+
+        A = self.A
+        [N, N] = np.shape(A)
+        dist_x = np.maximum(A[x, :], np.transpose(A[:, x]))
+        # dist_x = A[x,:]
+        #  dist_x = np.where(dist_x > 0, 1, 0)  # make 1 if positive, otherwise 0
+        # (!!! The above line seem to cause disagreement b/w Pivot and Glauber chains in WAN data for
+        # k1=0 and k2=1 case and other inner edge CHD cases -- 9/30/19)
+
+        if sum(dist_x) > 0:  # this holds if the current location x of pivot is not isolated
+            dist_x_new = dist_x / sum(dist_x)  # honest symmetric RW kernel
+            y = np.random.choice(np.arange(0, N), p=dist_x_new)  # proposed move
+
+            # Use MH-rule to accept or reject the move
+            # Use another coin flip (not mess with the kernel) to keep the computation local and fast
+            dist_y = np.maximum(A[y, :], np.transpose(A[:, y]))
+            # (!!! Symmetrizing the edge weight here does not seem to affect the convergence rate for WAN data)
+            # dist_y = A[y, :]
+            # prop_accept = min(1, A[y, x] * sum(dist_y) / (sum(dist_x) * A[x, y]))
+            prop_accept = min(1, sum(dist_x) / sum(dist_y))
+
+            if np.random.rand() > prop_accept:
+                y = x  # move to y rejected
+
+        else:  # if the current location is isolated, uniformly choose a new location
+            y = np.random.choice(np.arange(0, N))
+        return y
+
+    def Pivot_update(self, emb):
+        # G = underlying simple graph
+        # emb = current embedding of a path in the network
+        # k1 = length of left side chain from pivot
+        # updates the current embedding using pivot rule
+
+        k1 = self.k1
+        k2 = self.k2
+        x0 = emb[0]  # current location of pivot
+        x0 = self.RW_update(x0)  # new location of the pivot
+        B = self.path_adj(k1, k2)
+        #  emb_new = self.Path_sample_gen_position(x0, k1, k2)  # new path embedding
+        emb_new = self.tree_sample(B, x0)  # new path embedding
+        return emb_new
+
     def glauber_gen_update(self, B, emb):
         # A = N by N matrix giving edge weights on networks
         # emb = current embedding of the tree motif with adj mx B
@@ -183,7 +249,7 @@ class Network_Reconstructor():
                 print('Glauber move rejected')  # Won't happen once valid embedding is established
         return emb
 
-    def chd_gen_mx(self, B, emb):
+    def chd_gen_mx(self, B, emb, is_Glauber=True):
         # computes B-patches of the input network G using Glauber chain to evolve embedding of B in to G
         # iterations = number of iteration
         # underlying graph = specified by A
@@ -199,7 +265,10 @@ class Network_Reconstructor():
         hom_mx2 = np.zeros([k,k])
 
         for i in range(self.loc_avg_depth):
-            emb2 = self.glauber_gen_update(B, emb2)
+            if is_Glauber:
+                emb2 = self.glauber_gen_update(B, emb2)
+            else:
+                emb2 = self.Pivot_update(emb2)
             # full adjacency matrix over the path motif
             a2 = np.zeros([k,k])
             for q in np.arange(k):
@@ -214,33 +283,29 @@ class Network_Reconstructor():
             '''
         return hom_mx2, emb2
 
-    def get_patches_glauber(self, B, emb):
+    def get_patches_glauber(self, B, emb, is_Glauber=True):
         # B = adjacency matrix of the motif F to be embedded into the network
         # emb = current embedding F\rightarrow G
-        A = self.A
-        demb = Dyn_Emb(A)
-        [k, k] = B.shape
+        k = B.shape[0]
         X = np.zeros((k**2, 1))
         for i in np.arange(self.sample_size):
-            print('obtaining patch -- step %i' % i)
-            Y, emb = demb.chd_gen_mx(B, emb)  # k by k matrix
+            # print('obtaining patch -- step %i' % i)
+            Y, emb = self.chd_gen_mx(B, emb, is_Glauber)  # Y = k by k matrix, emb = one-step evolved embedding
             Y = Y.reshape(k**2, -1)
             if i == 0:
                 X = Y
             else:
                 X = np.append(X, Y, axis=1)  # x is class ndarray
-
+            # print('patch_i', i)
         #  now X.shape = (k**2, sample_size)
         # print(X)
         return X, emb
 
-    def get_single_patch_glauber(self, B, emb):
+    def get_single_patch_glauber(self, B, emb, is_Glauber=True):
         # B = adjacency matrix of the motif F to be embedded into the network
         # emb = current embedding F\rightarrow G
-        A = self.A
-        demb = Dyn_Emb(A)
-        [k, k] = B.shape
-        Y, emb = demb.chd_gen_mx(B, emb)  # k by k matrix
+        k = B.shape[0]
+        Y, emb = self.chd_gen_mx(B, emb, is_Glauber)  # k by k matrix
         X = Y.reshape(k ** 2, -1)
 
         #  now X.shape = (k**2, sample_size)
@@ -262,37 +327,64 @@ class Network_Reconstructor():
         W = self.W
         At = []
         Bt = []
-        code = self.code
+        Ct = []
+        code = []
+        errors = []
         for t in np.arange(self.MCMC_iterations):
-            print('obtaining patch in step %i started' % t)
-            X, emb = self.get_single_patch_glauber(B, emb)
-            print('obtaining patch in step %i is done' % t)
+            # print('obtaining patch in step %i started' % t)
+            for i in np.arange(0):
+                emb = self.glauber_gen_update(B, emb)
+
+            X, emb = self.get_patches_glauber(B, emb)
+            # print('X.size', X.shape)
+            # print('obtaining patch in step %i is done' % t)
 
             if t == 0:
-                self.nmf = Online_NMF(X, self.n_components, iterations=self.sub_iterations, batch_size=self.batch_size,
-                                      alpha=self.alpha)  # max number of possible patches
-                W, At, Bt, code = self.nmf.train_dict()
+                self.nmf = Online_NMF(X,
+                                      self.n_components,
+                                      iterations=self.sub_iterations,
+                                      batch_size=self.batch_size,
+                                      alpha=self.alpha,
+                                      beta=self.beta,
+                                      subsample=self.ONMF_subsample)  # max number of possible patches
+                self.W, self.At, self.Bt, self.Ct, self.H = self.nmf.train_dict()
+                code = self.H
+                error = np.trace(self.W @ self.At @ self.W.T) - 2 * np.trace(self.W @ self.Bt) + np.trace(self.Ct)
+                errors.append(error)
             else:
-                self.nmf = Online_NMF(X, self.n_components, iterations=self.sub_iterations, batch_size=self.batch_size,
-                                      ini_dict=W, ini_A=At, ini_B=Bt,
-                                      alpha=self.alpha, history=self.nmf.history)
+                self.nmf = Online_NMF(X,
+                                      n_components=self.n_components,
+                                      iterations=self.sub_iterations,
+                                      batch_size=self.batch_size,
+                                      ini_dict=self.W,
+                                      ini_A=self.At,
+                                      ini_B=self.Bt,
+                                      ini_C=self.Ct,
+                                      history=self.nmf.history,
+                                      alpha=None,
+                                      beta=self.beta,
+                                      subsample=self.ONMF_subsample)
+                print('nmf.history', self.nmf.history)
                 # out of "sample_size" columns in the data matrix, sample "batch_size" randomly and train the dictionary
                 # for "iterations" iterations
-                W, At, Bt, H = self.nmf.train_dict()
-                code += H
+                self.W, self.At, self.Bt, self.Ct, self.H = self.nmf.train_dict()
+                code += self.H
+                error = np.trace(self.W @ self.At @ self.W.T) - 2 * np.trace(self.W @ self.Bt) + np.trace(self.Ct)
+                print('error', error)
+                errors.append(error)
             #  progress status
-            # if 100 * t / self.iterations % 1 == 0:
-            #    print(t / self.iterations * 100)
-        self.W = W
+            print('Current time step %i out of %i' % (t, self.MCMC_iterations))
         self.code = code
         print('code size:', code.shape)
-        np.save('Network_dictionary/WAN/dict_learned' + "_" + str(self.k1) + str(self.k2) + "_" + str(self.n_components), W)
-        np.save('Network_dictionary/WAN/code_learned' + "_" + str(self.k1) + str(self.k2) + "_" + str(self.n_components), code)
+        np.save('Network_dictionary/WAN/dict_learned' + "_" + str(self.k2) + "_" + str(self.n_components) + "_" +str(self.file_number), self.W)
+        np.save('Network_dictionary/WAN/code_learned' + "_" + str(self.k2) + "_" + str(self.n_components) + "_" +str(self.file_number), self.code)
+        np.save('Network_dictionary/WAN/errors_' + str(self.k2) + "_" + str(self.n_components) + "_" +str(self.file_number), errors)
         # print(self.W.shape)
         # print(self.W)
 
     def display_dict(self, title, save_filename):
         #  display learned dictionary
+        print('W.sum', np.sum(self.W))
         W = self.W
         code = self.code  # row sum of code matrix will give importance of each dictionary patch
         n_components = W.shape[1]
@@ -303,15 +395,20 @@ class Network_Reconstructor():
         else:
             cols = rows + 1
 
+        importance = np.sum(code, axis=1)/sum(sum(code))
+        idx = np.argsort(importance)
+        idx = np.flip(idx)
+        # print('idx', idx)
+        # print('importance', importance)
+
         #fig, axs = plt.subplots(nrows=rows, ncols=cols, figsize=(5.5, 7),
         fig, axs = plt.subplots(nrows=5, ncols=9, figsize=(7, 5),
                                     subplot_kw={'xticks': [], 'yticks': []})
         k = self.k1 + self.k2 + 1  # number of nodes in the motif F
         for ax, j in zip(axs.flat, range(n_components)):
-            importance = sum(code[j, :])/sum(sum(code))
-            ax.set_xlabel('%1.2f' % importance, fontsize=15)
+            ax.set_xlabel('%1.2f' % importance[idx[j]], fontsize=15)  # get the largest first
             ax.xaxis.set_label_coords(0.5, -0.05)  # adjust location of importance appearing beneath patches
-            ax.imshow(W.T[j].reshape(k, k), cmap="gray_r", interpolation='nearest')
+            ax.imshow(W.T[idx[j]].reshape(k, k), cmap="gray_r", interpolation='nearest')
             # use gray_r to make black = 1 and white = 0
 
         plt.suptitle(title)
@@ -327,7 +424,7 @@ class Network_Reconstructor():
         plt.show()
 
 
-    def reconstruct_network(self, path, recons_iter=100):
+    def reconstruct_network(self, recons_iter=100, alpha=0, beta=0.75, is_Glauber=True):
         print('reconstructing given network...')
         '''
         Note: For WAN data, the algorithm reconstructs the normalized WAN matrix A/np.max(A). 
@@ -346,9 +443,9 @@ class Network_Reconstructor():
         c = 0
 
         for t in np.arange(recons_iter):
-            patch, emb = self.get_single_patch_glauber(B, emb)
+            patch, emb = self.get_single_patch_glauber(B, emb, is_Glauber)
             coder = SparseCoder(dictionary=self.W.T, transform_n_nonzero_coefs=None,
-                                transform_alpha=0, transform_algorithm='lasso_lars', positive_code=True)
+                                transform_alpha=alpha, transform_algorithm='lasso_lars', positive_code=True)
             # alpha = L1 regularization parameter. alpha=2 makes all codes zero (why?)
             # This only occurs when sparse coding a single array
             code = coder.transform(patch.T)
@@ -357,31 +454,73 @@ class Network_Reconstructor():
             for x in itertools.product(np.arange(k), repeat=2):
                 a = emb[x[0]]
                 b = emb[x[1]]
-                j = A_overlap_count[a,b]
-                A_recons[a,b] = (j*A_recons[a,b] + patch_recons[x[0], x[1]])/(j+1)
+                j = A_overlap_count[a,b].astype(float)
+                if j == 0:
+                    v = 0
+                else:
+                    v = j**(-beta)
+                A_recons[a,b] = (1-v)*A_recons[a,b] + v * patch_recons[x[0], x[1]]
                 # A_recons[a,b] = A_recons[a,b] + patch_recons[x[0], x[1]]
                 A_overlap_count[a,b] += 1
 
+            C = np.where(A_overlap_count>1, 1, 0)
             # progress status
-            if 100 * t / recons_iter % 1 == 0:
-                print(t / recons_iter * 100)
+            # print('Current time step %i out of %i' % (t, recons_iter))
+
+            if t % 1000 == 0:
+                print('A.norm, A_recons.norm, diff.norm', np.linalg.norm(self.A), np.linalg.norm(A_recons), np.linalg.norm(self.A - A_recons))
+                print('Current time step %i out of %i' % (t, recons_iter))
 
         print('Reconstructed in %.2f seconds' % (time() - t0))
-        np.save('Network_dictionary/WAN/twain_recons' + "_" + str(self.k1) + str(self.k2) + "_" + str(self.n_components),
+        np.save('Network_dictionary/WAN/twain_recons' + "_" + str(self.k2) + "_" + str(self.n_components) + str(self.file_number),
                 A_recons)
+        print('A.norm, A_recons.norm, diff.norm', np.linalg.norm(self.A), np.linalg.norm(A_recons),
+              np.linalg.norm((self.A - A_recons)*C), np.linalg.norm(self.A - A_recons))
+        print('C', np.sum(np.sum(C)))
+        # only compare edges that are ever visited by the reconstruction algorithm
         return A_recons
 
+def display_errors(k2, n_components, file_number):
+    errors1 = np.load("Network_dictionary/WAN/errors_" + str(k2) + '_' + str(n_components)+ "_" +str(file_number)+'.npy')
+    #errors2 = np.load("Ising/Ising_errors_" + str(T) + "_subsampling_10000.npy")
+    #errors3 = np.load("Ising/Ising_errors_" + str(T) + "_subsampling_100000.npy")
+    #errors4 = np.load("Ising/Ising_errors_" + str(T) + "_subsampling_500000.npy")
+
+    fig, axs = plt.subplots(nrows=1, ncols=1, figsize=(4, 4))
+    axs.plot(500 * np.arange(len(errors1)) / len(errors1), errors1, label='')
+    #axs.plot(500 * np.arange(len(errors2)) / len(errors2), errors2 / 40000, label='subsampling epoch of 10000')
+    #axs.plot(500 * np.arange(len(errors3)) / len(errors3), errors3 / 40000, label='subsampling epoch of 100000')
+    #axs.plot(500 * np.arange(len(errors4)) / len(errors4), errors4 / 40000, label='subsampling epoch of 500000')
+    axs.legend()
+    # axs.set_ylim(0,)
+    # axs.set_xticks(np.arange(500))
+    plt.tight_layout()
+    # plt.suptitle('Dictionary learned from patches of size %d' % k, fontsize=16)
+    # plt.subplots_adjust(0.08, 0.02, 0.92, 0.85, 0.08, 0.23)
+    plt.show()
+
+def display_recons():
+    A = np.genfromtxt("Data/WAN/twain_1.txt", usecols=range(211))
+    # A_recons = np.load("Network_dictionary/Wan/twain_recons_1_4512.npy")
+    # A_recons = np.load("Network_dictionary/Wan/twain_recons_2_4511.npy")
+    A_recons = np.load("Network_dictionary/Wan/twain_recons_3_4513.npy")
+    print('A.norm, A_recons.norm, diff.norm', np.linalg.norm(A/np.max(A)), np.linalg.norm(A_recons), np.linalg.norm(A/np.max(A) - A_recons))
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(4, 4.5))
+    ax.xaxis.set_ticks_position('bottom')
+    ax.imshow(np.log(A_recons*np.max(A) + 1))
+    plt.show()
 
 def main():
     data_rows = []
     A_recons = np.zeros(shape=(211, 211))
     A_overlap_count = np.zeros(shape=(211, 211))
 
-    n_components = 9
-    k1 = 1
-    k2 = 1
+    n_components = 45
+    k1 = 0
+    k2 = 2
+    file_number = 14
 
-    with open('WAN_list.csv', 'r') as csvFile:
+    with open('Data/Wan/WAN_list.csv', 'r') as csvFile:
         # creating a csv reader object
         reader = csv.DictReader(csvFile)
 
@@ -394,7 +533,7 @@ def main():
     sources = ["Data/WAN/" + data_rows[i]['filename'] + ".txt" for i in np.arange(num_files)]
 
     bar = progressbar.ProgressBar()
-    for i in bar(np.arange(0,1)):
+    for i in bar(np.arange(40,41)):
         # sources = ["Data/torus_adj.txt"]
         reconstructor = Network_Reconstructor(source=sources[i],
                                               n_components=n_components,
@@ -405,49 +544,31 @@ def main():
                                               loc_avg_depth=1,
                                               sub_iterations=20,
                                               k1=k1, k2=k2,
-                                              alpha=0.3)
+                                              alpha=0,
+                                              beta=0.75,
+                                              ONMF_subsample=True,
+                                              file_number = file_number)
         # For homogeneous network like the torus, setting alpha small seems to work more accurately.
         reconstructor.train_dict(sources[i])
-        # W = reconstructor.W  # trained dictionary
-        # reconstructor.W = np.load('Network_dictionary/WAN/dict_learned' "_" + str(k1) + str(k2) + "_" + str(n_components) + '.npy')
-        # reconstructor.code = np.load('Network_dictionary/WAN/code_learned' "_" + str(k1) + str(k2) + "_" + str(n_components) + '.npy')
+        # reconstructor.W = np.load('Network_dictionary/WAN/dict_learned' + "_" + str(k2) + "_" + str(n_components) + "_" + str(file_number)+'.npy')
+        # reconstructor.code = np.load('Network_dictionary/WAN/code_learned' + "_" + str(k2) + "_" + str(n_components) + "_" + str(file_number) + '.npy')
 
         ### save dictionay figures
         title = "Network dictionary patches" + "\n" + data_rows[i]['Author'] + " - " + data_rows[i]['Title']
-        # title = "Network dictionary patches" + "\n" + "10 by 10 torus"
-        save_filename = data_rows[i]['filename'] + "_" + str(k1) + str(k2) + "_" + str(n_components)
-        # save_filename = 'torus_dict'
+        save_filename = data_rows[i]['filename'] + "_" + str(k2) + "_" + str(n_components) +'_'+ str(file_number)
         reconstructor.display_dict(title, save_filename)
 
-        # progress status
-        if 100 * i / num_files % 1 == 0:
-            print(i / num_files * 100)
+
+        ### Display surrgate error for dictionary learning
+        # display_errors(k2, n_components, file_number)
 
         '''
         reconstruct network
         '''
-        # A_recons = reconstructor.reconstruct_network(path=sources[i], recons_iter=50000)
-
-        # np.save('Network_dictionary/WAN/' + save_filename + '_recons', A_recons)
-
-
-        '''
-        sources = ["Data/Ising/ising_200_trajectory_05_test" + str(n) + ".npy" for n in range(1)]
-        reconstructor = Image_Reconstructor(sources=sources, 
-                                            patch_size=20, 
-                                            batch_size=20, 
-                                            MCMC_iterations=10,
-                                            downscale_factor=1, 
-                                            is_matrix=False, 
-                                            is_stack=True)
-        reconstructor.train_dict(is_stack=True)
-        reconstructor.reconstruct_image("Data/Ising/ising_200_5_test0.npy", downscale_factor=2, patch_size=20, is_matrix=True)
-        dict = reconstructor.W  # trained dictionary
-        reconstructor.display_dictionary(dict, patch_size=20)
-        print(dict.shape)
-        '''
-
-    # return A_recons, A_overlap_count
+        A_recons = reconstructor.reconstruct_network(recons_iter=50000, alpha=0.1, beta=1)
+        # reconstructor.show_array(reconstructor.A)
+        # A_recons = np.load("Network_dictionary/Wan/twain_recons_2_4511.npy")
+        # display_recons()
 
 
 if __name__ == '__main__':

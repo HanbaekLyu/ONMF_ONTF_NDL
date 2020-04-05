@@ -28,8 +28,11 @@ class Online_NMF():
                  ini_dict=None,
                  ini_A=None,
                  ini_B=None,
+                 ini_C=None,
                  history=0,
-                 alpha=None):
+                 alpha=None,
+                 beta=None,
+                 subsample=False):
         '''
         X: data matrix
         n_components (int): number of columns in dictionary matrix W where each column represents on topic/feature
@@ -40,11 +43,14 @@ class Online_NMF():
         self.n_components = n_components
         self.batch_size = batch_size
         self.iterations = iterations
+        self.subsample = subsample
         self.initial_dict = ini_dict
         self.initial_A = ini_A
         self.initial_B = ini_B
+        self.initial_C = ini_C
         self.history = history
         self.alpha = alpha
+        self.beta = beta
         self.code = np.zeros(shape=(n_components, X.shape[1]))
 
     def sparse_code(self, X, W):
@@ -106,7 +112,7 @@ class Online_NMF():
         return W1
 
 
-    def step(self, X, A, B, W, t):
+    def step(self, X, A, B, C, W, t):
         '''
         Performs a single iteration of the online NMF algorithm from
         Han's Markov paper. 
@@ -133,13 +139,20 @@ class Online_NMF():
             print(H1.shape)
 
         # Update aggregate matrices A and B
-        A1 = (1/t)*((t-1)*A + np.dot(H1, H1.T))
-        B1 = (1/t)*((t-1)*B + np.dot(H1, X.T))
+        t = t.astype(float)
+        if self.beta == None:
+            beta = 1
+        else:
+            beta = self.beta
+        A1 = (1 - (t ** (-beta))) * A + t ** (-beta) * np.dot(H1, H1.T)
+        B1 = (1 - (t ** (-beta))) * B + t ** (-beta) * np.dot(H1, X.T)
+        C1 = (1 - (t ** (-beta))) * C + t ** (-beta) * np.dot(X, X.T)
+
         # Update dictionary matrix
         W1 = self.update_dict(W, A, B)
         self.history = t+1
         # print('history=', self.history)
-        return H1, A1, B1, W1
+        return H1, A1, B1, C1, W1
 
     def train_dict(self):
         '''
@@ -164,31 +177,37 @@ class Online_NMF():
             W = np.random.rand(d, r)
             A = np.zeros((r, r))
             B = np.zeros((r, d))
+            C = np.zeros((d, d))
             t0 = self.history
         else:
             W = self.initial_dict
             A = self.initial_A
             B = self.initial_B
+            C = self.initial_C
             t0 = self.history
 
         for i in np.arange(1, self.iterations):
+            idx = np.arange(self.X.shape[1])
             # randomly choose batch_size number of columns to sample
-            idx = np.random.randint(n, size=self.batch_size)
-
             # initializing the "batch" of X, which are the subset
             # of columns from X that were randomly chosen above
+            if self.subsample:
+                idx = np.random.randint(n, size=self.batch_size)
+
             X_batch = self.X[:, idx]
-            
             # iteratively update W using batches of X, along with
             # iteratively updated values of A and B
-            H, A, B, W = self.step(X_batch, A, B, W, t0+i)
+            H, A, B, C, W = self.step(X_batch, A, B, C, W, t0+i)
             code[:, idx] += H
             # print('dictionary=', W)
             # print('code=', H)
             # plt.matshow(H)
-        return W, A, B, code
+        print('iteration %i out of %i' % (i, self.iterations))
+        return W, A, B, C, code
 
 
+
+### Used only for an old version of Ising model simulation
 class Online_NMF_stack():
     # ONMF for a stack of data matrices representing a time series of data matrices
     def __init__(self, X, n_components=100, iterations=500, batch_size=20, ini_dict=None):
