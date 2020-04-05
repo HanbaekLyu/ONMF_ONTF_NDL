@@ -23,6 +23,8 @@ These codes are based on my papers below:
   4. **image_reconstruction_tensor.py** : Dictionary learning / reconstruction for color images based on ontf.py
   5. **network_reconstruction.py** : Network Dictionary Learning proposed in reference [1] for network data in matrices 
   6. **network_reconstruction_nx.py** : Network Dictionary Learning proposed in reference [1] for networkx format 
+  7. **ising_simulator.py** : Gibbs sampler for the 2-dimensional Ising model 
+  8. **ising_reconstruction.py** : Dictionary learning / reconstruction from MCMC trajectory of Ising spin configurations 
   
 ## Authors
 
