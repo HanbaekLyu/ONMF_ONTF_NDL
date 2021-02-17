@@ -12,7 +12,7 @@ Hanbaek Lyu, Yacoub Kureh, Joshua Vendrow, and Mason A. Porter,\
 These codes are based on my papers below: 
   1. Hanbaek Lyu, Deanna Needell, and Laura Balzano, 
      “Online matrix factorization for markovian data and applications to network dictionary learning.” 
-     https://arxiv.org/abs/1911.01931
+     Journal of Machine Learning Research. 21(251):1−49, 2020 [Preprint](https://arxiv.org/abs/1911.01931) [Journal](https://jmlr.org/papers/v21/20-444.html)
   2. Hanbaek Lyu, Facundo Memoli, and David Sivakoff, 
      “Sampling random graph homomorphisms and applications to network data analysis.” 
      https://arxiv.org/abs/1910.09483
