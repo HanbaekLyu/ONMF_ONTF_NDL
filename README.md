@@ -20,7 +20,7 @@ These codes are based on my papers below:
 ## File description 
 
   1. **onmf.py** : Online Nonnegative Matrix Factorization algorithm 
-  2. **ontf.py** : Online Nonnegative Tensor Factorization algorithm (Vectoerization + ONMF. For proper CP-decomposition, see [OCPDL](https://github.com/HanbaekLyu/OnlineCPDL))
+  2. **ontf.py** : Online Nonnegative Tensor Factorization algorithm (Matricization + ONMF. For a proper CP-decomposition, see [OCPDL](https://github.com/HanbaekLyu/OnlineCPDL))
   3. **image_reconstruction.py** : Dictionary learning / Image reconstruction based on onmf.py
   4. **image_reconstruction_tensor.py** : Dictionary learning / reconstruction for color images based on ontf.py
   5. **network_reconstruction_nx.py** : Network Dictionary Learning proposed in reference [1] for networkx format 
