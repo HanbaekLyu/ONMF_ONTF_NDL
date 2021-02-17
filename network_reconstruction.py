@@ -1,4 +1,4 @@
-from onmf import Online_NMF
+from utils.onmf import Online_NMF
 import numpy as np
 import csv
 import progressbar
@@ -224,8 +224,8 @@ class Network_Reconstructor():
             # If B has no edge, conditional measure is uniform over the nodes
 
             '''
-            For the WAN data, there is a giant connected component and the Pivot chain only explores that component. 
-            In order to match the Glauber chain, we can let the single node case k1=k2=0 to behave like a RW. 
+            For the WAN data, there is a giant connected component and the Pivot chain only explores that component.
+            In order to match the Glauber chain, we can let the single node case k1=k2=0 to behave like a RW.
             '''
             emb[0] = self.RW_update(emb[0])
             # print('Glauber chain updated via RW')
@@ -427,8 +427,8 @@ class Network_Reconstructor():
     def reconstruct_network(self, recons_iter=100, alpha=0, beta=0.75, is_Glauber=True):
         print('reconstructing given network...')
         '''
-        Note: For WAN data, the algorithm reconstructs the normalized WAN matrix A/np.max(A). 
-        Scale the reconstructed matrix B by np.max(A) and compare with the original network. 
+        Note: For WAN data, the algorithm reconstructs the normalized WAN matrix A/np.max(A).
+        Scale the reconstructed matrix B by np.max(A) and compare with the original network.
         '''
 
         A = self.A
@@ -573,4 +573,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

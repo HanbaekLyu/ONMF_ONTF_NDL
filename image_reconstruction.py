@@ -1,4 +1,4 @@
-from onmf import Online_NMF, Online_NMF_stack
+from src.onmf import Online_NMF, update_code_within_radius
 import itertools
 import numpy as np
 from PIL import Image
@@ -6,7 +6,8 @@ from skimage.transform import downscale_local_mean
 from sklearn.feature_extraction.image import extract_patches_2d
 from sklearn.feature_extraction.image import reconstruct_from_patches_2d
 from tensorly import unfold as tl_unfold
-from sklearn.decomposition import SparseCoder
+from tqdm import trange
+
 
 from time import time
 
@@ -273,7 +274,7 @@ class Image_Reconstructor():
         At = []
         Bt = []
         code = self.code
-        for t in np.arange(self.iterations):
+        for t in trange(self.iterations):
             X = self.extract_random_patches()
             if t == 0:
                 self.nmf = Online_NMF(X,
@@ -285,7 +286,7 @@ class Image_Reconstructor():
                                       ini_B=None,
                                       history=0,
                                       alpha=None)
-                W, At, Bt, H = self.nmf.train_dict()
+                W, At, Bt, Ct, H = self.nmf.train_dict()
             else:
                 self.nmf = Online_NMF(X,
                                       n_components=self.n_components,
@@ -294,13 +295,14 @@ class Image_Reconstructor():
                                       ini_dict=W,
                                       ini_A=At,
                                       ini_B=Bt,
+                                      ini_C=Ct,
                                       history=self.nmf.history,
                                       alpha=None)
                 # out of "sample_size" columns in the data matrix, sample "batch_size" randomly and train the dictionary
                 # for "iterations" iterations
-                W, At, Bt, H = self.nmf.train_dict()
+                W, At, Bt, Ct, H = self.nmf.train_dict()
                 # code += H
-            print('Current iteration %i out of %i' % (t, self.iterations))
+            # print('Current iteration %i out of %i' % (t, self.iterations))
         self.W = W
         print('dict_shape:', self.W.shape)
         print('code_shape:', self.code.shape)
@@ -347,8 +349,8 @@ class Image_Reconstructor():
     def reconstruct_image_color(self, path, recons_resolution=1):
         print('reconstructing given network...')
         '''
-        Note: For WAN data, the algorithm reconstructs the normalized WAN matrix A/np.max(A). 
-        Scale the reconstructed matrix B by np.max(A) and compare with the original network. 
+        Note: For WAN data, the algorithm reconstructs the normalized WAN matrix A/np.max(A).
+        Scale the reconstructed matrix B by np.max(A) and compare with the original network.
         '''
         A = self.read_img_as_array(path)  # A.shape = (row, col, 3)
         A_matrix = A.reshape(-1, A.shape[1])  # (row, col, 3) --> (3row, col)
@@ -366,11 +368,12 @@ class Image_Reconstructor():
                 patch = A[i:i + k, j:j + k, :]
                 patch = patch.reshape((-1, 1))
                 # print('patch.shape', patch.shape)
-                coder = SparseCoder(dictionary=self.W.T, transform_n_nonzero_coefs=None,
-                                    transform_alpha=1, transform_algorithm='lasso_lars', positive_code=True)
+                # coder = SparseCoder(dictionary=self.W.T, transform_n_nonzero_coefs=None,
+                #                    transform_alpha=1, transform_algorithm='lasso_lars', positive_code=True)
                 # alpha = L1 regularization parameter. alpha=2 makes all codes zero (why?)
-                code = coder.transform(patch.T)
-                patch_recons = np.dot(self.W, code.T).T
+                # code = coder.transform(patch.T)
+                code = update_code_within_radius(patch, self.W, H0=None, r=None, alpha=1, sub_iter=10, stopping_diff=0.01)
+                patch_recons = np.dot(self.W, code).T
                 patch_recons = patch_recons.reshape(k, k, 3)
 
                 # now paint the reconstruction canvas
@@ -423,4 +426,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

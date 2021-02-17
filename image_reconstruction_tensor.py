@@ -1,4 +1,4 @@
-from ontf import Online_NTF
+from utils.ontf import Online_NTF
 import numpy as np
 from PIL import Image
 from skimage.transform import downscale_local_mean
@@ -220,7 +220,7 @@ class Image_Reconstructor_tensor():
     def train_dict(self, mode, learn_joint_dict):
         print('training dictionaries from patches along mode %i...' % mode)
         '''
-        Trains dictionary based on patches from an i.i.d. sequence of batch of patches 
+        Trains dictionary based on patches from an i.i.d. sequence of batch of patches
         mode = 0, 1, 2
         learn_joint_dict = True or False parameter
         '''
@@ -287,8 +287,8 @@ class Image_Reconstructor_tensor():
     def reconstruct_image_color(self, path, recons_resolution=1):
         print('reconstructing given network...')
         '''
-        Note: For WAN data, the algorithm reconstructs the normalized WAN matrix A/np.max(A). 
-        Scale the reconstructed matrix B by np.max(A) and compare with the original network. 
+        Note: For WAN data, the algorithm reconstructs the normalized WAN matrix A/np.max(A).
+        Scale the reconstructed matrix B by np.max(A) and compare with the original network.
         '''
         A = self.read_img_as_array(path)  # A.shape = (row, col, 3)
         A_matrix = A.reshape(-1, A.shape[1])  # (row, col, 3) --> (3row, col)
@@ -380,4 +380,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

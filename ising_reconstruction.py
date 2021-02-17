@@ -1,4 +1,4 @@
-from onmf import Online_NMF
+from utils.onmf import Online_NMF
 import itertools
 import numpy as np
 from PIL import Image
@@ -246,4 +246,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
