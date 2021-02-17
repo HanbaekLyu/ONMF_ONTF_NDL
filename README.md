@@ -2,6 +2,11 @@
 
 Online Nonnegative Matrix/Tensor Factorization algorithms with applications in dictionary learning for image and network data. 
 
+For network dictionary learning experiments, we recommend to look at an alternative repository [NDL_paper](https://github.com/HanbaekLyu/NDL_paper/blob/main/README.md) associated with the more recent paper 
+
+Hanbaek Lyu, Yacoub Kureh, Joshua Vendrow, and Mason A. Porter,\
+[*"Learning low-rank latent mesoscale structures in networks*"](https://arxiv.org/abs/2102.06984) (arXiv 2021)
+
 ## References
 
 These codes are based on my papers below: 
@@ -11,9 +16,6 @@ These codes are based on my papers below:
   2. Hanbaek Lyu, Facundo Memoli, and David Sivakoff, 
      “Sampling random graph homomorphisms and applications to network data analysis.” 
      https://arxiv.org/abs/1910.09483
-  3. Hanbaek Lyu, Deanna Needell, and Chris Strohmeier, 
-     “Online tensor factorization for markovian data”
-     In preperation.
 
 ## File description 
 
