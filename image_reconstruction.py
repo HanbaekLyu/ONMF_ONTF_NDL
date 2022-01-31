@@ -7,14 +7,9 @@ from sklearn.feature_extraction.image import extract_patches_2d
 from sklearn.feature_extraction.image import reconstruct_from_patches_2d
 from tensorly import unfold as tl_unfold
 from tqdm import trange
-
-
 from time import time
-
 import matplotlib.pyplot as plt
-
-DEBUG = False
-
+import matplotlib.gridspec as gridspec
 
 class Image_Reconstructor():
     def __init__(self,
@@ -49,8 +44,12 @@ class Image_Reconstructor():
         self.is_matrix = is_matrix
         self.is_stack = is_stack  # if True, input data is a 3d array
         self.is_color = is_color
-        self.W = np.zeros(shape=(patch_size, n_components))
-        self.code = np.zeros(shape=(n_components, iterations*batch_size))
+        self.W = np.zeros(shape=(patch_size**2, n_components))
+        if is_color:
+            #self.W = np.ones(shape=(3*patch_size**2, n_components))
+            self.W = np.random.rand(3*patch_size**2, n_components)
+        self.code = np.ones(shape=(n_components, iterations*batch_size))
+        self.A_recons = []
 
         '''
         # read in patches
@@ -69,19 +68,19 @@ class Image_Reconstructor():
             print(self.patches.shape)
         '''
         # read in image as array
-        self.data = self.read_img_as_array(self.path)
+        self.data = self.read_img_as_array(path=self.path, is_matrix=self.is_matrix, is_color=self.is_color)
 
-    def read_img_as_array(self, path):
+    def read_img_as_array(self, path, is_matrix=False, is_color=True):
         '''
         Read input image as a narray
         '''
 
-        if self.is_matrix:
+        if is_matrix:
             img = np.load(path)
             data = (img + 1) / 2  # it was +-1 matrix; now it is 0-1 matrix
         else:
             img = Image.open(path)
-            if self.is_color:
+            if is_color:
                 img = img.convert('RGB')
                 #  = data.reshape(-1, data.shape[1])  # (row, col, 3) --> (3row, col)
             else:
@@ -237,9 +236,18 @@ class Image_Reconstructor():
 
     def display_dictionary(self, W):
         k = self.patch_size
-        fig, axs = plt.subplots(nrows=10, ncols=10, figsize=(6,6),
+
+        rows = np.round(np.sqrt(W.shape[1]))
+        rows = rows.astype(int)
+        if rows ** 2 == W.shape[1]:
+            cols = rows
+        else:
+            cols = rows + 1
+
+        fig, axs = plt.subplots(nrows=rows, ncols=cols, figsize=(6,6),
                                 subplot_kw={'xticks':[], 'yticks': []})
-        for ax, i in zip(axs.flat, range(100)):
+
+        for ax, i in zip(axs.flat, range(rows*cols)):
             if not self.is_color:
                 ax.imshow(W.T[i].reshape(k, k), cmap="gray", interpolation='nearest')
             else:
@@ -250,6 +258,7 @@ class Image_Reconstructor():
         plt.suptitle('Dictionary learned from patches of size %d' % k, fontsize=16)
         plt.subplots_adjust(0.08, 0.02, 0.92, 0.85, 0.08, 0.23)
         plt.show()
+
 
     def get_downscaled_dims(self, path, downscale_factor=None, is_matrix=False):
         # need to put is_matrix arg at the end to avoid error (don't know why)
@@ -363,7 +372,7 @@ class Image_Reconstructor():
         num_rows = np.floor((A_recons.shape[0]-k)/recons_resolution).astype(int)
         num_cols = np.floor((A_recons.shape[1]-k)/recons_resolution).astype(int)
 
-        for i in np.arange(0, A_recons.shape[0]-k, recons_resolution):
+        for i in trange(0, A_recons.shape[0]-k, recons_resolution):
             for j in np.arange(0, A_recons.shape[1]-k, recons_resolution):
                 patch = A[i:i + k, j:j + k, :]
                 patch = patch.reshape((-1, 1))
@@ -383,46 +392,130 @@ class Image_Reconstructor():
                     A_overlap_count[i+x[0], j+x[1]] += 1
 
                 # progress status
-                print('reconstructing (%i, %i)th patch out of (%i, %i)' % (i/recons_resolution, j/recons_resolution, num_rows, num_cols))
+                #print('reconstructing (%i, %i)th patch out of (%i, %i)' % (i/recons_resolution, j/recons_resolution, num_rows, num_cols))
         print('Reconstructed in %.2f seconds' % (time() - t0))
         print('A_recons.shape', A_recons.shape)
         np.save('Image_dictionary/img_recons_color', A_recons)
-        plt.imshow(A_recons)
+
+        fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(6,6),
+                                subplot_kw={'xticks':[], 'yticks': []})
+        ax.imshow(A_recons)
+        plt.suptitle('Reconstructed image')
+        plt.savefig('Image_dictionary/img_recons_color1.jpg', bbox_inches='tight')
+        self.A_recons = A_recons
         return A_recons
 
-def main():
 
-    patch_size = 20
-    sources = ["Data/renoir/" + str(n) + ".jpg" for n in np.arange(0,1)]
-    for path in sources:
-        reconstructor = Image_Reconstructor(path=path,
-                                            iterations=100,
-                                            sub_iterations=3,
+def display_recons_dict_list(W_list,
+                                 training_iter_list,
+                                 A_recons_list,
+                                 save_path,
+                                 title=None,
+                                 grid_shape=None,
+                                 fig_size=[10,10]):
+        W = W_list[0]
+        n_components = W.shape[1]
+        print('W.shape', W.shape)
+        k = int(np.sqrt(W.shape[0]/3))
+
+        rows = np.round(np.sqrt(n_components))
+        rows = rows.astype(int)
+        if grid_shape is not None:
+            rows = grid_shape[0]
+            cols = grid_shape[1]
+        else:
+            if rows ** 2 == n_components:
+                cols = rows
+            else:
+                cols = rows + 1
+
+        idx = np.arange(W.shape[1])
+
+        fig = plt.figure(figsize=fig_size, constrained_layout=False)
+        outer_grid = gridspec.GridSpec(nrows=2, ncols=len(W_list)+1, wspace=0.2, hspace=0.2)
+        for t in np.arange(3):
+            # make nested gridspecs
+
+            if t == 1: # dictionary
+                for j in np.arange(len(W_list)):
+                    W = W_list[j]
+                    ### Make gridspec
+                    inner_grid = outer_grid[t, j+1].subgridspec(rows, cols, wspace=0.2, hspace=0.02)
+                    #gs1 = fig.add_gridspec(nrows=rows, ncols=cols, wspace=0.05, hspace=0.05)
+
+                    for i in range(rows * cols):
+                        a = i // cols
+                        b = i % cols
+                        ax = fig.add_subplot(inner_grid[a, b])
+                        patch = W.T[idx[i]].reshape(k, k, 3)
+                        ax.imshow(patch/np.max(patch), interpolation='nearest')
+                        #ax.set_xlabel('Training iter = %i' % training_iter_list[j], fontsize=13)  # get the largest first
+                        # ax.xaxis.set_label_coords(0.5, -0.05)  # adjust location of importance appearing beneath patches
+                        ax.set_xticks([])
+                        ax.set_yticks([])
+
+            if t == 0: # reconstruction
+                for j in np.arange(len(W_list)):
+                    A_recons = A_recons_list[j]
+
+                    inner_grid = outer_grid[t, j+1].subgridspec(1, 1, wspace=0, hspace=0)
+                    ax = fig.add_subplot(inner_grid[0, 0])
+                    ax.imshow(A_recons)
+
+            if t == 2: # original
+                a = 1
+                for j in np.arange(len(W_list), len(W_list)+2):
+                    A = A_recons_list[j]
+                    inner_grid = outer_grid[a, 0].subgridspec(1, 1, wspace=0, hspace=0)
+                    ax = fig.add_subplot(inner_grid[0, 0])
+                    ax.imshow(A)
+                    a -= 1
+
+        if title is not None:
+            plt.suptitle(title, fontsize=25)
+        fig.subplots_adjust(left=0.1, bottom=0.1, right=0.9, top=0.9, wspace=0.2, hspace=0)
+        fig.savefig(save_path, bbox_inches='tight')
+
+def main():
+    patch_size = 10
+    #sources = ["Data/renoir/" + str(n) + ".jpg" for n in np.arange(0,1)]
+    path_dict_img = "Data/piccaso/1.jpg"
+    path_recons = "Data/renoir/0.jpg"
+    training_iter_list = [0,2,1000]
+    W_list = []
+    A_recons_list = []
+    for training_iter in training_iter_list:
+        reconstructor = Image_Reconstructor(path=path_dict_img,
+                                            n_components=25,
+                                            iterations=training_iter,
+                                            sub_iterations=10,
                                             patch_size=patch_size,
-                                            batch_size=50,
-                                            num_patches=100,
-                                            downscale_factor=1,
+                                            batch_size=10,
+                                            num_patches=10,
+                                            downscale_factor=10,
                                             is_matrix=False,
                                             is_color=True)
         # reconstructor.save_patches("escher_patches.npy")
         reconstructor.train_dict()
         # reconstructor.W = np.load('Image_dictionary/dict_learned_21.npy')
-        dict = reconstructor.W  # trained dictionary
-        # print(dict.shape)
-        reconstructor.display_dictionary(dict)
-        reconstructor.reconstruct_image_color(path="Data/renoir/0.jpg")
+        W_list.append(reconstructor.W)  # trained dictionary
+        #reconstructor.display_dictionary(img_dict)
+        reconstructor.reconstruct_image_color(path=path_recons,
+                                              recons_resolution=10)
+        A_recons_list.append(reconstructor.A_recons)
 
+    ### Append original images for dictionary learning and reconstruction
+    img_dict = reconstructor.read_img_as_array(path_dict_img, is_matrix=False, is_color=True)
+    img_recons = reconstructor.read_img_as_array(path_recons, is_matrix=False, is_color=True)
+    A_recons_list.append(img_dict)
+    A_recons_list.append(img_recons)
 
-    '''
-    sources = ["Data/Ising/ising_200_trajectory_05_test" + str(n) + ".npy" for n in range(1)]
-    reconstructor = Image_Reconstructor(sources=sources, patch_size=20, batch_size=20, iterations=10,
-                                        downscale_factor=1, is_matrix=True, is_stack=True)
-    reconstructor.train_dict(is_stack=True)
-    reconstructor.reconstruct_image("Data/Ising/ising_200_5_test0.npy", downscale_factor=2, patch_size=20, is_matrix=True)
-    dict = reconstructor.W  # trained dictionary
-    reconstructor.display_dictionary(dict, patch_size=20)
-    print(dict.shape)
-    '''
+    display_recons_dict_list(W_list=W_list,
+                         training_iter_list=training_iter_list,
+                         A_recons_list=A_recons_list,
+                         fig_size = [11,6],
+                         save_path = 'Image_dictionary/dict_recons_list_1',
+                         title=None)
 
 if __name__ == '__main__':
     main()
