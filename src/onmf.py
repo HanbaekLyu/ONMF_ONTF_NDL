@@ -25,9 +25,7 @@ class Online_NMF():
                  iterations=500,
                  batch_size=20,
                  ini_dict=None,
-                 ini_A=None,
-                 ini_B=None,
-                 ini_C=None,
+                 ini_agg=None,
                  history=0,
                  alpha=None,
                  beta=None,
@@ -44,9 +42,7 @@ class Online_NMF():
         self.iterations = iterations
         self.subsample = subsample
         self.initial_dict = ini_dict
-        self.initial_A = ini_A
-        self.initial_B = ini_B
-        self.initial_C = ini_C
+        self.initial_agg =ini_agg
         self.history = history
         self.alpha = alpha
         self.beta = beta
@@ -120,7 +116,7 @@ class Online_NMF():
         return W1
 
 
-    def step(self, X, A, B, C, W, t):
+    def step(self, X, aggregates, W, t):
         '''
         Performs a single iteration of the online NMF algorithm from
         Han's Markov paper.
@@ -139,6 +135,10 @@ class Online_NMF():
         '''
         d, n = np.shape(X)
         d, r = np.shape(W)
+        A = aggregates[0]
+        B = aggregates[1]
+        if len(aggregates)==3:
+            C = aggregates[2]
 
         # Compute H1 by sparse coding X using dictionary W
         H1 = self.sparse_code(X, W)
@@ -154,15 +154,19 @@ class Online_NMF():
             beta = self.beta
         A1 = (1 - (t ** (-beta))) * A + t ** (-beta) * np.dot(H1, H1.T)
         B1 = (1 - (t ** (-beta))) * B + t ** (-beta) * np.dot(H1, X.T)
-        C1 = (1 - (t ** (-beta))) * C + t ** (-beta) * np.dot(X, X.T)
+        if len(aggregates)==3:
+            C1 = (1 - (t ** (-beta))) * C + t ** (-beta) * np.dot(X, X.T)
 
         # Update dictionary matrix
         W1 = self.update_dict(W, A, B)
         self.history = t+1
         # print('history=', self.history)
-        return H1, A1, B1, C1, W1
+        aggregates1 = [A1, B1]
+        if len(aggregates)==3:
+            aggregates1.append(C1)
+        return H1, aggregates1, W1
 
-    def train_dict(self):
+    def train_dict(self, full_code=False):
         '''
         Learns a dictionary matrix W with n_components number of columns based
         on a fixed data matrix X
@@ -178,6 +182,7 @@ class Online_NMF():
         d, n = np.shape(self.X)
         r = self.n_components
         code = self.code
+        aggregates = self.initial_agg
 
         if self.initial_dict is None:
             # initialize dictionary matrix W with random values
@@ -185,13 +190,17 @@ class Online_NMF():
             W = np.random.rand(d, r)
             A = np.zeros((r, r))
             B = np.zeros((r, d))
-            C = np.zeros((d, d))
+            aggregates = [A,B]
+            if full_code:
+                C = np.zeros((d, d))
+                aggregates.append(C)
             t0 = self.history
         else:
             W = self.initial_dict
-            A = self.initial_A
-            B = self.initial_B
-            C = self.initial_C
+            A = self.initial_agg[0]
+            B = self.initial_agg[1]
+            if full_code:
+                C = self.initial_agg[2]
             t0 = self.history
 
         for i in np.arange(1, self.iterations):
@@ -205,13 +214,16 @@ class Online_NMF():
             X_batch = self.X[:, idx]
             # iteratively update W using batches of X, along with
             # iteratively updated values of A and B
-            H, A, B, C, W = self.step(X_batch, A, B, C, W, t0+i)
+            aggregates = [A,B]
+            if full_code:
+                aggregates.append(C)
+            H, aggregates, W = self.step(X_batch, aggregates, W, t0+i)
             code[:, idx] += H
             # print('dictionary=', W)
             # print('code=', H)
             # plt.matshow(H)
         # print('iteration %i out of %i' % (i, self.iterations))
-        return W, A, B, C, code
+        return W, aggregates, code
 
 
 
